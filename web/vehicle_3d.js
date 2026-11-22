@@ -219,7 +219,6 @@ class CADAssetPipeline {
       front_suspension: {
         id: 'front_suspension',
         file: 'assets/front_suspension.glb',
-        fallback: 'assets/converted/front_suspension/front_suspension.glb',
         label: 'Front Double-Wishbone Suspension Assembly',
         status: 'pending',
         error: null,
@@ -230,7 +229,6 @@ class CADAssetPipeline {
       rear_suspension: {
         id: 'rear_suspension',
         file: 'assets/rear_suspension.glb',
-        fallback: 'assets/converted/rear_suspension/rear_suspension.glb',
         label: 'Rear Multi-Link Suspension Assembly',
         status: 'pending',
         error: null,
@@ -241,7 +239,6 @@ class CADAssetPipeline {
       wheel_assembly: {
         id: 'wheel_assembly',
         file: 'assets/wheel_assembly.glb',
-        fallback: 'assets/converted/wheels/wheel_assembly.glb',
         label: '18-inch Alloy Wheel & Tyre Assembly',
         status: 'pending',
         error: null,
@@ -345,10 +342,9 @@ class CADAssetPipeline {
     if (typeof THREE !== 'undefined' && typeof THREE.GLTFLoader !== 'undefined') {
       this.loader = new THREE.GLTFLoader();
       this.isLoaderAvailable = true;
-      console.log('✓ CADAssetPipeline: Official Three.js GLTFLoader initialized.');
     } else {
       this.isLoaderAvailable = false;
-      console.warn('CADAssetPipeline: THREE.GLTFLoader is not available. Loading pipeline initialized in diagnostic mode.');
+      console.warn('CADAssetPipeline: THREE.GLTFLoader is not available.');
     }
   }
 
@@ -364,127 +360,112 @@ class CADAssetPipeline {
 
     const promises = Object.values(this.manifest).map(asset => {
       return new Promise(resolve => {
-        const tryLoad = (url, isFallback = false) => {
-          this.loader.load(
-            url,
-            gltf => {
-              asset.status = 'loaded';
-              asset.file = url;
-              asset.gltf = gltf;
+        this.loader.load(
+          asset.file,
+          gltf => {
+            asset.status = 'loaded';
+            asset.gltf = gltf;
 
-              // Measure Bounding Box & Dimensions
-              const box = new THREE.Box3().setFromObject(gltf.scene);
-              const size = new THREE.Vector3();
-              const center = new THREE.Vector3();
-              box.getSize(size);
-              box.getCenter(center);
-              asset.bounds = {
-                min: [box.min.x, box.min.y, box.min.z],
-                max: [box.max.x, box.max.y, box.max.z],
-                size: [size.x, size.y, size.z],
-                center: [center.x, center.y, center.z]
-              };
-              asset.dimensions = `${size.x.toFixed(2)}m × ${size.y.toFixed(2)}m × ${size.z.toFixed(2)}m`;
+            // Measure Bounding Box & Dimensions
+            const box = new THREE.Box3().setFromObject(gltf.scene);
+            const size = new THREE.Vector3();
+            const center = new THREE.Vector3();
+            box.getSize(size);
+            box.getCenter(center);
+            asset.bounds = {
+              min: [box.min.x, box.min.y, box.min.z],
+              max: [box.max.x, box.max.y, box.max.z],
+              size: [size.x, size.y, size.z],
+              center: [center.x, center.y, center.z]
+            };
+            asset.dimensions = `${size.x.toFixed(2)}m × ${size.y.toFixed(2)}m × ${size.z.toFixed(2)}m`;
 
-              // For front suspension: synthesize the verified mirrored right-side nodes & calipers
-              if (asset.id === 'front_suspension') {
-                const fs = gltf.scene;
-                if (!fs.getObjectByName('FL_BrakeCaliper')) {
-                  const bc = new THREE.Group(); bc.name = 'FL_BrakeCaliper'; fs.add(bc);
-                }
-                const lcaLeft = fs.getObjectByName('FL_LowerWishbone') || fs.getObjectByName('LowerWishbone');
-                if (lcaLeft && !fs.getObjectByName('FR_LowerWishbone')) {
-                  const frLca = lcaLeft.clone(true); frLca.name = 'FR_LowerWishbone'; frLca.scale.set(1, 1, -1); fs.add(frLca);
-                }
-                const ucaLeft = fs.getObjectByName('FL_UpperWishbone') || fs.getObjectByName('UpperWishbone');
-                if (ucaLeft && !fs.getObjectByName('FR_UpperWishbone')) {
-                  const frUca = ucaLeft.clone(true); frUca.name = 'FR_UpperWishbone'; frUca.scale.set(1, 1, -1); fs.add(frUca);
-                }
-                const knLeft = fs.getObjectByName('FL_Knuckle') || fs.getObjectByName('Knuckle');
-                if (knLeft && !fs.getObjectByName('FR_Knuckle')) {
-                  const frKn = knLeft.clone(true); frKn.name = 'FR_Knuckle'; frKn.scale.set(1, 1, -1); fs.add(frKn);
-                }
-                const hubLeft = fs.getObjectByName('FL_Hub') || fs.getObjectByName('Hub');
-                if (hubLeft && !fs.getObjectByName('FR_Hub')) {
-                  const frHub = hubLeft.clone(true); frHub.name = 'FR_Hub'; frHub.scale.set(1, 1, -1); fs.add(frHub);
-                }
-                if (!fs.getObjectByName('FR_BrakeCaliper')) {
-                  const bc = new THREE.Group(); bc.name = 'FR_BrakeCaliper'; fs.add(bc);
-                }
+            // Front suspension: synthesize mirrored right-side nodes & calipers
+            if (asset.id === 'front_suspension') {
+              const fs = gltf.scene;
+              if (!fs.getObjectByName('FL_BrakeCaliper')) {
+                const bc = new THREE.Group(); bc.name = 'FL_BrakeCaliper'; fs.add(bc);
               }
-
-              // For rear suspension: synthesize the verified mirrored right-side nodes & calipers
-              if (asset.id === 'rear_suspension') {
-                const rs = gltf.scene;
-                if (!rs.getObjectByName('RL_BrakeCaliper')) {
-                  const bc = new THREE.Group(); bc.name = 'RL_BrakeCaliper'; rs.add(bc);
-                }
-                const lcaLeft = rs.getObjectByName('RL_LowerControlArm') || rs.getObjectByName('LowerControlArm');
-                if (lcaLeft && !rs.getObjectByName('RR_LowerControlArm')) {
-                  const rrLca = lcaLeft.clone(true); rrLca.name = 'RR_LowerControlArm'; rrLca.scale.set(1, 1, -1); rs.add(rrLca);
-                }
-                const ucaLeft = rs.getObjectByName('RL_UpperControlArm') || rs.getObjectByName('UpperControlArm');
-                if (ucaLeft && !rs.getObjectByName('RR_UpperControlArm')) {
-                  const rrUca = ucaLeft.clone(true); rrUca.name = 'RR_UpperControlArm'; rrUca.scale.set(1, 1, -1); rs.add(rrUca);
-                }
-                const knLeft = rs.getObjectByName('RL_Knuckle') || rs.getObjectByName('Knuckle');
-                if (knLeft && !rs.getObjectByName('RR_Knuckle')) {
-                  const rrKn = knLeft.clone(true); rrKn.name = 'RR_Knuckle'; rrKn.scale.set(1, 1, -1); rs.add(rrKn);
-                }
-                const hubLeft = rs.getObjectByName('RL_Hub') || rs.getObjectByName('Hub');
-                if (hubLeft && !rs.getObjectByName('RR_Hub')) {
-                  const rrHub = hubLeft.clone(true); rrHub.name = 'RR_Hub'; rrHub.scale.set(1, 1, -1); rs.add(rrHub);
-                }
-                if (!rs.getObjectByName('RR_BrakeCaliper')) {
-                  const bc = new THREE.Group(); bc.name = 'RR_BrakeCaliper'; rs.add(bc);
-                }
+              const lcaLeft = fs.getObjectByName('FL_LowerWishbone') || fs.getObjectByName('LowerWishbone');
+              if (lcaLeft && !fs.getObjectByName('FR_LowerWishbone')) {
+                const frLca = lcaLeft.clone(true); frLca.name = 'FR_LowerWishbone'; frLca.scale.set(1, 1, -1); fs.add(frLca);
               }
-
-              // For corner coilovers: ensure corner-specific node names
-              if (asset.id === 'coilover_fl') {
-                const db = gltf.scene.getObjectByName('DamperBody'); if (db) db.name = 'FL_DamperBody';
-                const pr = gltf.scene.getObjectByName('PistonRod'); if (pr) pr.name = 'FL_PistonRod';
-                const cs = gltf.scene.getObjectByName('CoilSpring'); if (cs) cs.name = 'FL_CoilSpring';
-              } else if (asset.id === 'coilover_fr') {
-                const db = gltf.scene.getObjectByName('DamperBody'); if (db) db.name = 'FR_DamperBody';
-                const pr = gltf.scene.getObjectByName('PistonRod'); if (pr) pr.name = 'FR_PistonRod';
-                const cs = gltf.scene.getObjectByName('CoilSpring'); if (cs) cs.name = 'FR_CoilSpring';
-              } else if (asset.id === 'coilover_rl') {
-                const db = gltf.scene.getObjectByName('DamperBody'); if (db) db.name = 'RL_DamperBody';
-                const pr = gltf.scene.getObjectByName('PistonRod'); if (pr) pr.name = 'RL_PistonRod';
-                const cs = gltf.scene.getObjectByName('CoilSpring'); if (cs) cs.name = 'RL_CoilSpring';
-              } else if (asset.id === 'coilover_rr') {
-                const db = gltf.scene.getObjectByName('DamperBody'); if (db) db.name = 'RR_DamperBody';
-                const pr = gltf.scene.getObjectByName('PistonRod'); if (pr) pr.name = 'RR_PistonRod';
-                const cs = gltf.scene.getObjectByName('CoilSpring'); if (cs) cs.name = 'RR_CoilSpring';
+              const ucaLeft = fs.getObjectByName('FL_UpperWishbone') || fs.getObjectByName('UpperWishbone');
+              if (ucaLeft && !fs.getObjectByName('FR_UpperWishbone')) {
+                const frUca = ucaLeft.clone(true); frUca.name = 'FR_UpperWishbone'; frUca.scale.set(1, 1, -1); fs.add(frUca);
               }
-
-              // Node Hierarchy & Mechanical Mapping
-              this.reports[asset.id] = MechanicalNodeMapper.inspectAndMap(gltf.scene, asset.label, asset.id);
-
-              console.log(`[CADAssetPipeline] Loaded "${url}" (${asset.dimensions}).`);
-              resolve(asset);
-            },
-            xhr => {
-              if (xhr.lengthComputable) {
-                const pct = Math.round((xhr.loaded / xhr.total) * 100);
-                console.log(`[CADAssetPipeline] Loading ${url}: ${pct}%`);
+              const knLeft = fs.getObjectByName('FL_Knuckle') || fs.getObjectByName('Knuckle');
+              if (knLeft && !fs.getObjectByName('FR_Knuckle')) {
+                const frKn = knLeft.clone(true); frKn.name = 'FR_Knuckle'; frKn.scale.set(1, 1, -1); fs.add(frKn);
               }
-            },
-            error => {
-              if (!isFallback && asset.fallback) {
-                console.warn(`[CADAssetPipeline] Primary url "${url}" failed (404). Retrying fallback "${asset.fallback}"...`);
-                tryLoad(asset.fallback, true);
-              } else {
-                asset.status = 'missing';
-                asset.error = error.message || 'File not found (404)';
-                this.reports[asset.id] = MechanicalNodeMapper.inspectAndMap(null, asset.label);
-                resolve(asset);
+              const hubLeft = fs.getObjectByName('FL_Hub') || fs.getObjectByName('Hub');
+              if (hubLeft && !fs.getObjectByName('FR_Hub')) {
+                const frHub = hubLeft.clone(true); frHub.name = 'FR_Hub'; frHub.scale.set(1, 1, -1); fs.add(frHub);
+              }
+              if (!fs.getObjectByName('FR_BrakeCaliper')) {
+                const bc = new THREE.Group(); bc.name = 'FR_BrakeCaliper'; fs.add(bc);
               }
             }
-          );
-        };
-        tryLoad(asset.file);
+
+            // Rear suspension: synthesize mirrored right-side nodes & calipers
+            if (asset.id === 'rear_suspension') {
+              const rs = gltf.scene;
+              if (!rs.getObjectByName('RL_BrakeCaliper')) {
+                const bc = new THREE.Group(); bc.name = 'RL_BrakeCaliper'; rs.add(bc);
+              }
+              const lcaLeft = rs.getObjectByName('RL_LowerControlArm') || rs.getObjectByName('LowerControlArm');
+              if (lcaLeft && !rs.getObjectByName('RR_LowerControlArm')) {
+                const rrLca = lcaLeft.clone(true); rrLca.name = 'RR_LowerControlArm'; rrLca.scale.set(1, 1, -1); rs.add(rrLca);
+              }
+              const ucaLeft = rs.getObjectByName('RL_UpperControlArm') || rs.getObjectByName('UpperControlArm');
+              if (ucaLeft && !rs.getObjectByName('RR_UpperControlArm')) {
+                const rrUca = ucaLeft.clone(true); rrUca.name = 'RR_UpperControlArm'; rrUca.scale.set(1, 1, -1); rs.add(rrUca);
+              }
+              const knLeft = rs.getObjectByName('RL_Knuckle') || rs.getObjectByName('Knuckle');
+              if (knLeft && !rs.getObjectByName('RR_Knuckle')) {
+                const rrKn = knLeft.clone(true); rrKn.name = 'RR_Knuckle'; rrKn.scale.set(1, 1, -1); rs.add(rrKn);
+              }
+              const hubLeft = rs.getObjectByName('RL_Hub') || rs.getObjectByName('Hub');
+              if (hubLeft && !rs.getObjectByName('RR_Hub')) {
+                const rrHub = hubLeft.clone(true); rrHub.name = 'RR_Hub'; rrHub.scale.set(1, 1, -1); rs.add(rrHub);
+              }
+              if (!rs.getObjectByName('RR_BrakeCaliper')) {
+                const bc = new THREE.Group(); bc.name = 'RR_BrakeCaliper'; rs.add(bc);
+              }
+            }
+
+            // Corner coilovers: ensure corner-specific node names
+            if (asset.id === 'coilover_fl') {
+              const db = gltf.scene.getObjectByName('DamperBody'); if (db) db.name = 'FL_DamperBody';
+              const pr = gltf.scene.getObjectByName('PistonRod'); if (pr) pr.name = 'FL_PistonRod';
+              const cs = gltf.scene.getObjectByName('CoilSpring'); if (cs) cs.name = 'FL_CoilSpring';
+            } else if (asset.id === 'coilover_fr') {
+              const db = gltf.scene.getObjectByName('DamperBody'); if (db) db.name = 'FR_DamperBody';
+              const pr = gltf.scene.getObjectByName('PistonRod'); if (pr) pr.name = 'FR_PistonRod';
+              const cs = gltf.scene.getObjectByName('CoilSpring'); if (cs) cs.name = 'FR_CoilSpring';
+            } else if (asset.id === 'coilover_rl') {
+              const db = gltf.scene.getObjectByName('DamperBody'); if (db) db.name = 'RL_DamperBody';
+              const pr = gltf.scene.getObjectByName('PistonRod'); if (pr) pr.name = 'RL_PistonRod';
+              const cs = gltf.scene.getObjectByName('CoilSpring'); if (cs) cs.name = 'RL_CoilSpring';
+            } else if (asset.id === 'coilover_rr') {
+              const db = gltf.scene.getObjectByName('DamperBody'); if (db) db.name = 'RR_DamperBody';
+              const pr = gltf.scene.getObjectByName('PistonRod'); if (pr) pr.name = 'RR_PistonRod';
+              const cs = gltf.scene.getObjectByName('CoilSpring'); if (cs) cs.name = 'RR_CoilSpring';
+            }
+
+            // Node Hierarchy & Mechanical Mapping
+            this.reports[asset.id] = MechanicalNodeMapper.inspectAndMap(gltf.scene, asset.label, asset.id);
+            resolve(asset);
+          },
+          undefined,
+          error => {
+            asset.status = 'missing';
+            asset.error = error?.message || 'File not found (404)';
+            this.reports[asset.id] = MechanicalNodeMapper.inspectAndMap(null, asset.label);
+            console.warn(`[CADAssetPipeline] Could not load "${asset.file}": ${asset.error}`);
+            resolve(asset);
+          }
+        );
       });
     });
 
@@ -492,17 +473,13 @@ class CADAssetPipeline {
 
     const loadedCount = Object.values(this.manifest).filter(a => a.status === 'loaded').length;
     if (loadedCount > 0) {
-      console.log(`[CADAssetPipeline] ${loadedCount} CAD asset(s) successfully loaded.`);
       this.applyLoadedAssets();
-    } else {
-      console.log('[CADAssetPipeline] No external CAD models currently in web/assets/. Standard CAD fallback active.');
     }
 
     if (onComplete) onComplete(this.getDiagnosticReport());
   }
 
   applyLoadedAssets() {
-    console.log('[CADAssetPipeline] Applying loaded CAD assemblies to vehicle hierarchy...');
     const corners = this.renderer.corners;
     if (!corners) return;
 
@@ -543,7 +520,6 @@ class CADAssetPipeline {
       this.renderer.chassisGroup.add(diffScene);
       if (this.renderer.diffMesh) this.renderer.diffMesh.visible = false;
       if (this.renderer.diffCover) this.renderer.diffCover.visible = false;
-      console.log('✓ Mounted CAD Differential Carrier on rear axle line.');
     }
 
     // Structural Chassis Frame Spaceframe Reinforcement (CAD Crawler Cage)
@@ -551,9 +527,6 @@ class CADAssetPipeline {
     // geometric components from floating around the chassis, the disjointed crawler cage is not
     // mounted into the sports car chassis frame.
     const frameAsset = this.manifest.chassis_frame;
-    if (frameAsset && frameAsset.status === 'loaded') {
-      console.log('✓ Validated CAD Chassis Frame asset in pipeline (crawler cage excluded from sports chassis).');
-    }
 
     // 2. FOUR 18-INCH ALLOY WHEEL & TYRE CAD ASSEMBLIES (4-Layer Nested Rig)
     const wheelAsset = this.manifest.wheel_assembly;
@@ -610,7 +583,6 @@ class CADAssetPipeline {
           c.tireGroup.traverse(ch => { if (ch.isMesh) ch.visible = false; });
         }
       });
-      console.log('✓ Mounted 4 CAD 18-inch alloy wheel assemblies into 4-layer nested rig.');
     }
 
     // 3. FRONT DOUBLE-WISHBONE SUSPENSION CAD ASSEMBLY
@@ -678,7 +650,6 @@ class CADAssetPipeline {
           }
         }
       });
-      console.log('✓ Mounted CAD Front Double-Wishbone Suspensions (FL & FR).');
     }
 
     // 4. REAR INDEPENDENT MULTI-LINK / SLA SUSPENSION CAD ASSEMBLY
@@ -746,7 +717,6 @@ class CADAssetPipeline {
           }
         }
       });
-      console.log('✓ Mounted CAD Rear Independent Suspensions (RL & RR).');
     }
 
     // 5. COILOVER DAMPERS & SLIDING PISTON RODS
@@ -785,7 +755,6 @@ class CADAssetPipeline {
         c.cadPistonRod = prClone;
       }
     }
-    console.log('✓ Mounted CAD Coilover Damper Bodies & Sliding Piston Rods.');
 
     // 6. HIGH-RESOLUTION 35k-VERTEX HELICAL COIL SPRINGS
     const springAsset = this.manifest.high_res_spring;
@@ -802,7 +771,6 @@ class CADAssetPipeline {
         if (c.springMesh) c.springMesh.visible = false;
         if (c.rubberBoot) c.rubberBoot.visible = false;
       });
-      console.log('✓ Mounted 4 CAD High-Resolution Helical Springs with Metallic Red PBR.');
     }
 
     this.renderer.updateStatusBadges("Automotive CAD Assemblies Active (60 FPS)", "success");
@@ -828,10 +796,9 @@ class CADAssetPipeline {
 }
 
 class Vehicle3DRenderer {
-  constructor(canvasA, canvasB, canvasC = null) {
+  constructor(canvasA, canvasB) {
     this.canvasA = canvasA; // Side View Canvas
     this.canvasB = canvasB; // Front View Canvas
-    this.canvasC = canvasC; // Optional Orbit Canvas
 
     this.statusBadgeA = document.getElementById('viewportStatusA');
     this.statusBadgeB = document.getElementById('viewportStatusB');
@@ -856,19 +823,15 @@ class Vehicle3DRenderer {
             this.updateStatusBadges("CAD Pipeline Active • Baseline Fallback (60 FPS)", "info");
           }
         });
-
-        console.log("✓ Vehicle3DRenderer: Automotive suspension CAD assemblies and pipeline initialized.");
       } catch (err) {
-        console.warn("Three.js initialization failed, switching to Canvas 3D engine:", err);
+        console.error("Three.js initialization failed:", err);
         this.initError = err;
         this.useThree = false;
-        this.initCanvasFallback();
-        this.updateStatusBadges("Canvas 3D Suspension Active", "warning");
+        this.updateStatusBadges("Renderer Initialization Failed", "danger");
       }
     } else {
-      console.info("Three.js not loaded. Activating built-in Canvas 3D engine.");
-      this.initCanvasFallback();
-      this.updateStatusBadges("Canvas 3D Suspension Active", "info");
+      console.error("Three.js library is not loaded.");
+      this.updateStatusBadges("Three.js Library Missing", "danger");
     }
   }
 
@@ -2858,10 +2821,7 @@ class Vehicle3DRenderer {
       if (this.controlsB) this.controlsB.update();
       this.rendererB.render(this.scene, this.cameraB);
     } catch (err) {
-      console.error("Three.js render error; switching to Canvas 3D engine:", err);
-      this.useThree = false;
-      this.initCanvasFallback();
-      this.updateStatusBadges("Canvas 3D Suspension Active", "warning");
+      console.error("Three.js render error:", err);
     }
   }
 
@@ -2883,355 +2843,5 @@ class Vehicle3DRenderer {
       this.cameraB.aspect = wB / hB;
       this.cameraB.updateProjectionMatrix();
     }
-  }
-
-  /* ============================================================
-     RESILIENT CANVAS FALLBACK ENGINE (CAD Suspension Architecture)
-     ============================================================ */
-  initCanvasFallback() {
-    this.ctxA = this.canvasA ? this.canvasA.getContext('2d') : null;
-    this.ctxB = this.canvasB ? this.canvasB.getContext('2d') : null;
-  }
-
-  updateCanvasFallback(physicsEngine) {
-    if (!this.ctxA && !this.ctxB) return;
-    this.drawSideViewCanvas(this.ctxA, physicsEngine);
-    this.drawFrontViewCanvas(this.ctxB, physicsEngine);
-  }
-
-  drawSideViewCanvas(ctx, physicsEngine) {
-    if (!ctx) return;
-    const W = this.canvasA.width = this.canvasA.clientWidth * window.devicePixelRatio;
-    const H = this.canvasA.height = this.canvasA.clientHeight * window.devicePixelRatio;
-
-    ctx.fillStyle = '#f6f5f1';
-    ctx.fillRect(0, 0, W, H);
-
-    ctx.strokeStyle = '#e4e0d6';
-    ctx.lineWidth = 1;
-    for (let x = 0; x <= W; x += 28) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, H);
-      ctx.stroke();
-    }
-    for (let y = 0; y <= H; y += 28) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(W, y);
-      ctx.stroke();
-    }
-
-    const state = physicsEngine.state;
-    const z_c = (state && state.z_c !== undefined) ? state.z_c : (state ? state[0] : 0.0);
-    const theta = (state && state.theta !== undefined) ? state.theta : (state ? state[2] : 0.0);
-    const zw = {
-      FL: (state && state.z_w && state.z_w.FL !== undefined) ? state.z_w.FL : (state ? state[6] : 0.0),
-      RL: (state && state.z_w && state.z_w.RL !== undefined) ? state.z_w.RL : (state ? state[10] : 0.0),
-    };
-
-    const groundY = H * 0.72;
-    const scale = W / 5.4;
-    const carCenterX = W * 0.50;
-
-    ctx.fillStyle = '#2e333b';
-    ctx.fillRect(0, groundY, W, H - groundY);
-
-    const z_c_pix = z_c * scale;
-    const pitch = theta;
-
-    ctx.save();
-    ctx.translate(carCenterX, groundY - 0.33 * scale - z_c_pix);
-    ctx.rotate(-pitch);
-
-    // Dark Steel Longitudinal Frame Rail
-    ctx.fillStyle = '#1e222a';
-    ctx.fillRect(-2.10 * scale, -0.06 * scale, 4.05 * scale, 0.10 * scale);
-
-    // Front & Rear Axle Frame Arches
-    ctx.fillRect(0.95 * scale, -0.16 * scale, 0.60 * scale, 0.12 * scale);
-    ctx.fillRect(-1.75 * scale, -0.18 * scale, 0.65 * scale, 0.12 * scale);
-
-    // Shock Towers with Anodized Blue Top Hats
-    ctx.fillStyle = '#d0d5dd';
-    ctx.fillRect(1.15 * scale, -0.32 * scale, 0.20 * scale, 0.22 * scale);
-    ctx.fillRect(-1.55 * scale, -0.32 * scale, 0.20 * scale, 0.22 * scale);
-
-    ctx.fillStyle = '#0077b6';
-    ctx.fillRect(1.18 * scale, -0.36 * scale, 0.14 * scale, 0.04 * scale);
-    ctx.fillRect(-1.52 * scale, -0.36 * scale, 0.14 * scale, 0.04 * scale);
-
-    // Engine Block & Driveline
-    ctx.fillStyle = '#8a93a0';
-    ctx.fillRect(0.85 * scale, -0.22 * scale, 0.68 * scale, 0.26 * scale);
-
-    ctx.fillStyle = '#1e222a';
-    ctx.fillRect(0.85 * scale, -0.28 * scale, 0.66 * scale, 0.06 * scale);
-
-    ctx.fillStyle = '#8a93a0';
-    ctx.fillRect(0.20 * scale, -0.16 * scale, 0.65 * scale, 0.18 * scale);
-
-    ctx.fillStyle = '#5a626d';
-    ctx.fillRect(-1.30 * scale, -0.08 * scale, 1.50 * scale, 0.04 * scale);
-
-    ctx.fillStyle = '#8a93a0';
-    ctx.beginPath();
-    ctx.arc(-1.45 * scale, -0.06 * scale, 0.12 * scale, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.restore();
-
-    // Draw Suspension Assemblies & Wheels (FL and RL)
-    const wheels = [
-      { id: 'FL', xOffset: 1.25 * scale, isFront: true },
-      { id: 'RL', xOffset: -1.45 * scale, isFront: false },
-    ];
-
-    wheels.forEach(w => {
-      const wx = carCenterX + w.xOffset;
-      const zw_pix = (zw[w.id] || 0.0) * scale;
-      const wy = groundY - 0.33 * scale - zw_pix;
-
-      const pitchOffset = (w.id === 'FL' ? 1.25 * pitch : -1.45 * pitch);
-      const chY = groundY - 0.33 * scale - (z_c + pitchOffset) * scale;
-
-      // Lower Control Arm
-      ctx.strokeStyle = '#d0d5dd';
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.moveTo(wx - 25, chY + 16);
-      ctx.lineTo(wx, wy);
-      ctx.stroke();
-
-      // Damper Cylinder Body (Titanium)
-      ctx.fillStyle = '#2e3440';
-      ctx.fillRect(wx - 7, wy - 30, 14, 30);
-
-      // Blue Anodized Collar Rings
-      ctx.fillStyle = '#0077b6';
-      ctx.fillRect(wx - 9, wy - 28, 18, 5);
-
-      // Chrome Piston Rod
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(wx - 3.5, chY + 12, 7, Math.max(8, wy - 30 - chY - 12));
-
-      // Yellow Bump Stop
-      ctx.fillStyle = '#e5a93c';
-      ctx.fillRect(wx - 6, chY + 12, 12, 10);
-
-      // Metallic Red Helical Coil Spring
-      ctx.strokeStyle = '#d90429';
-      ctx.lineWidth = 3.5;
-      ctx.beginPath();
-      const nCoils = 7;
-      const spLen = wy - chY - 14;
-      for (let i = 0; i <= nCoils; i++) {
-        const sy = chY + 14 + (i / nCoils) * spLen;
-        const sx = wx + (i % 2 === 0 ? -11 : 11);
-        if (i === 0) ctx.moveTo(wx, sy);
-        else ctx.lineTo(sx, sy);
-      }
-      ctx.lineTo(wx, wy);
-      ctx.stroke();
-
-      // Rubber Tire
-      ctx.fillStyle = '#181a1c';
-      ctx.beginPath();
-      ctx.arc(wx, wy, 0.33 * scale, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Alloy Rim
-      ctx.fillStyle = '#f1f3f5';
-      ctx.beginPath();
-      ctx.arc(wx, wy, 0.23 * scale, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Brake Caliper (Brembo Copper-Red)
-      ctx.fillStyle = '#d9381e';
-      ctx.fillRect(wx - 0.08 * scale, wy - 0.12 * scale, 0.08 * scale, 0.16 * scale);
-
-      // Hub Center Cap
-      ctx.fillStyle = '#1e222a';
-      ctx.beginPath();
-      ctx.arc(wx, wy, 0.05 * scale, 0, Math.PI * 2);
-      ctx.fill();
-    });
-  }
-
-  drawFrontViewCanvas(ctx, physicsEngine) {
-    if (!ctx) return;
-    const W = this.canvasB.width = this.canvasB.clientWidth * window.devicePixelRatio;
-    const H = this.canvasB.height = this.canvasB.clientHeight * window.devicePixelRatio;
-
-    ctx.fillStyle = '#f6f5f1';
-    ctx.fillRect(0, 0, W, H);
-
-    ctx.strokeStyle = '#e4e0d6';
-    ctx.lineWidth = 1;
-    for (let x = 0; x <= W; x += 28) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, H);
-      ctx.stroke();
-    }
-    for (let y = 0; y <= H; y += 28) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(W, y);
-      ctx.stroke();
-    }
-
-    const state = physicsEngine.state;
-    const z_c = (state && state.z_c !== undefined) ? state.z_c : (state ? state[0] : 0.0);
-    const phi = (state && state.phi !== undefined) ? state.phi : (state ? state[4] : 0.0);
-    const zw = {
-      FL: (state && state.z_w && state.z_w.FL !== undefined) ? state.z_w.FL : (state ? state[6] : 0.0),
-      FR: (state && state.z_w && state.z_w.FR !== undefined) ? state.z_w.FR : (state ? state[8] : 0.0),
-    };
-
-    const groundY = H * 0.72;
-    const scale = W / 3.2;
-    const carCenterX = W / 2;
-
-    ctx.fillStyle = '#2e333b';
-    ctx.fillRect(0, groundY, W, H - groundY);
-
-    const z_c_pix = z_c * scale;
-    const roll = phi;
-
-    ctx.save();
-    ctx.translate(carCenterX, groundY - 0.33 * scale - z_c_pix);
-    ctx.rotate(roll);
-
-    // Front Subframe Box Crossmember
-    ctx.fillStyle = '#d0d5dd';
-    ctx.fillRect(-0.58 * scale, 0.08 * scale, 1.16 * scale, 0.10 * scale);
-
-    // Frame Rails
-    ctx.fillStyle = '#1e222a';
-    ctx.fillRect(-0.52 * scale, -0.06 * scale, 0.10 * scale, 0.20 * scale);
-    ctx.fillRect(0.42 * scale, -0.06 * scale, 0.10 * scale, 0.20 * scale);
-
-    // Front Shock Towers with Blue Anodized Top Hats
-    ctx.fillStyle = '#d0d5dd';
-    ctx.fillRect(-0.58 * scale, -0.32 * scale, 0.14 * scale, 0.28 * scale);
-    ctx.fillRect(0.44 * scale, -0.32 * scale, 0.14 * scale, 0.28 * scale);
-
-    ctx.fillStyle = '#0077b6';
-    ctx.fillRect(-0.56 * scale, -0.36 * scale, 0.10 * scale, 0.04 * scale);
-    ctx.fillRect(0.46 * scale, -0.36 * scale, 0.10 * scale, 0.04 * scale);
-
-    // Strut Tower Reinforcement Bar
-    ctx.strokeStyle = '#d0d5dd';
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    ctx.moveTo(-0.52 * scale, -0.30 * scale);
-    ctx.lineTo(0.52 * scale, -0.30 * scale);
-    ctx.stroke();
-
-    // Engine Block
-    ctx.fillStyle = '#8a93a0';
-    ctx.fillRect(-0.24 * scale, -0.22 * scale, 0.48 * scale, 0.30 * scale);
-
-    ctx.fillStyle = '#1e222a';
-    ctx.fillRect(-0.22 * scale, -0.28 * scale, 0.44 * scale, 0.06 * scale);
-
-    // Steering Rack Housing
-    ctx.fillStyle = '#d0d5dd';
-    ctx.fillRect(-0.35 * scale, 0.10 * scale, 0.70 * scale, 0.05 * scale);
-
-    // Sway Bar
-    ctx.strokeStyle = '#1e222a';
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(-0.52 * scale, 0.12 * scale);
-    ctx.lineTo(0.52 * scale, 0.12 * scale);
-    ctx.stroke();
-
-    ctx.restore();
-
-    // Front Left & Right Suspension
-    const fWheels = [
-      { id: 'FL', xOffset: -(physicsEngine.params.frontTrack / 2.0) * scale },
-      { id: 'FR', xOffset: (physicsEngine.params.frontTrack / 2.0) * scale },
-    ];
-
-    fWheels.forEach(w => {
-      const wx = carCenterX + w.xOffset;
-      const zw_pix = (zw[w.id] || 0.0) * scale;
-      const wy = groundY - 0.33 * scale - zw_pix;
-
-      const rollOffset = (w.id === 'FL' ? -physicsEngine.params.frontTrack * 0.5 * roll : physicsEngine.params.frontTrack * 0.5 * roll);
-      const chY = groundY - 0.33 * scale - (z_c + rollOffset) * scale;
-
-      // Lower Wishbone
-      ctx.strokeStyle = '#d0d5dd';
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.moveTo(carCenterX + (w.id === 'FL' ? -0.38 * scale : 0.38 * scale), chY + 22);
-      ctx.lineTo(wx, wy);
-      ctx.stroke();
-
-      // Upper Wishbone
-      ctx.strokeStyle = '#d0d5dd';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(carCenterX + (w.id === 'FL' ? -0.32 * scale : 0.32 * scale), chY + 8);
-      ctx.lineTo(wx, wy - 26);
-      ctx.stroke();
-
-      // Half-Shaft
-      ctx.strokeStyle = '#5a626d';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(carCenterX + (w.id === 'FL' ? -0.18 * scale : 0.18 * scale), chY + 14);
-      ctx.lineTo(wx, wy);
-      ctx.stroke();
-
-      // Damper Body
-      ctx.fillStyle = '#2e3440';
-      ctx.fillRect(wx - 7, wy - 32, 14, 32);
-
-      // Blue Collar Rings
-      ctx.fillStyle = '#0077b6';
-      ctx.fillRect(wx - 9, wy - 30, 18, 5);
-
-      // Chrome Shaft
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(wx - 3.5, chY + 10, 7, Math.max(8, wy - 32 - chY - 10));
-
-      // Yellow Bump Stop
-      ctx.fillStyle = '#e5a93c';
-      ctx.fillRect(wx - 6, chY + 10, 12, 10);
-
-      // Red Helical Coil Spring
-      ctx.strokeStyle = '#d90429';
-      ctx.lineWidth = 3.5;
-      ctx.beginPath();
-      const nCoils = 6;
-      const spLen = wy - chY - 12;
-      for (let i = 0; i <= nCoils; i++) {
-        const sy = chY + 12 + (i / nCoils) * spLen;
-        const sx = wx + (i % 2 === 0 ? -11 : 11);
-        if (i === 0) ctx.moveTo(wx, sy);
-        else ctx.lineTo(sx, sy);
-      }
-      ctx.lineTo(wx, wy);
-      ctx.stroke();
-
-      // Tire Profile
-      ctx.fillStyle = '#181a1c';
-      ctx.fillRect(wx - 0.11 * scale, wy - 0.33 * scale, 0.225 * scale, 0.66 * scale);
-
-      // Alloy Rim
-      ctx.fillStyle = '#f1f3f5';
-      ctx.fillRect(wx - 0.08 * scale, wy - 0.23 * scale, 0.16 * scale, 0.46 * scale);
-
-      // Brake Caliper
-      ctx.fillStyle = '#d9381e';
-      ctx.fillRect(wx - 0.04 * scale, wy - 0.14 * scale, 0.08 * scale, 0.10 * scale);
-    });
-
-    ctx.restore();
   }
 }

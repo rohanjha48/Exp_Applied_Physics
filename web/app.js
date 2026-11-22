@@ -15,9 +15,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // 2. INITIALIZE 3D RENDERER WITH SYNCHRONIZED VIEWPORTS
   const canvasA = document.getElementById('canvasSide');
   const canvasB = document.getElementById('canvasFront');
-  const canvasC = document.getElementById('canvasOrbit');
 
-  const renderer = new Vehicle3DRenderer(canvasA, canvasB, canvasC);
+  const renderer = new Vehicle3DRenderer(canvasA, canvasB);
 
   // 3. TELEMETRY TIME-SERIES BUFFERS & OSCILLOSCOPE CHARTS
   const maxHistory = 200;

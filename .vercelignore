@@ -5,6 +5,7 @@ __pycache__/
 *.bak
 *.backup_*
 requirements.txt
+tests/
 
 # Ignore secrets, environment files & certificates
 .env

@@ -38,6 +38,8 @@ ENV/
 
 # Unused heavy incoming raw CAD and STEP assets (>100MB, not used in live simulator)
 web/assets/incoming/
+web/assets/renders/
+scratch/
 
 # Vercel deployment cache and environments
 .vercel/
