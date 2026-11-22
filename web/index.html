@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Vehicle Suspension Simulator | Automotive Physics Lab</title>
+  <link rel="stylesheet" href="style.css?v=2.2">
+  <!-- Local Three.js and loaders with CDN fallback for 100% offline and online availability -->
+  <script src="lib/three.min.js"></script>
+  <script src="lib/OrbitControls.js"></script>
+  <script src="lib/GLTFLoader.js"></script>
+  <script>
+    if (typeof THREE === 'undefined') {
+      document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\\/script>');
+      document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"><\\/script>');
+      document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"><\\/script>');
+    }
+  </script>
+</head>
+<body>
+
+  <!-- Laboratory Top Bar -->
+  <header class="lab-header">
+    <div class="brand-section">
+      <div class="brand-icon">⚙</div>
+      <div class="title-group">
+        <h1>Vehicle Suspension Simulator</h1>
+        <p>Automotive Dynamics Lab • 7-DOF Mass–Spring–Damper Physics</p>
+      </div>
+    </div>
+
+    <div class="header-controls">
+      <div class="view-pills">
+        <button class="view-pill active" data-view="dual">Dual Sync View</button>
+        <button class="view-pill" data-view="iso">3/4 Inspection View</button>
+        <button class="view-pill" data-view="side">Side View Focus</button>
+        <button class="view-pill" data-view="front">Front View Focus</button>
+        <button class="view-pill" data-view="front_closeup">Front Close-up</button>
+        <button class="view-pill" data-view="rear_closeup">Rear Close-up</button>
+      </div>
+
+      <button id="btnChassisMode" class="btn active" title="Toggle between Exposed Rolling Chassis and Complete Vehicle Body">🏎 Mode: Exposed Chassis</button>
+      <button id="btnResetCamera" class="btn" title="Reset 3D cameras to default elevation angles">📷 Reset Cameras</button>
+      <button id="btnPlayPause" class="btn btn-primary">⏸ Pause</button>
+      <button id="btnReset" class="btn">↺ Reset</button>
+      <button id="btnRestart" class="btn">⏮ Restart Road</button>
+      <button id="btnAssetReport" class="btn" title="View CAD Asset Pipeline & Mechanical Node Mapping Report">📦 CAD Pipeline</button>
+      <button id="btnEdu" class="btn">📘 Physics Theory</button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="lab-container">
+
+    <!-- 1. TWO SIMULTANEOUS SYNCHRONIZED 3D VIEWPORTS -->
+    <section class="viewports-wrapper" id="viewportsWrapper">
+      <!-- VIEW A: SIDE VIEW -->
+      <div class="viewport-card" id="cardViewA">
+        <div class="viewport-header">
+          <span id="titleViewA">VIEW A — SIDE ELEVATION</span>
+          <span class="viewport-tag">🖱 DRAG TO ORBIT • SCROLL TO ZOOM</span>
+        </div>
+        <div class="canvas-container">
+          <canvas id="canvasSide" class="viewport-canvas"></canvas>
+          <div class="hud-overlay">
+            <span id="hudSpeed">V: 50 km/h</span>
+            <span id="hudTime">T: 0.0s</span>
+            <span>AXLES: DUAL INDEPENDENT</span>
+          </div>
+          <div id="viewportStatusA" class="viewport-status-badge">Renderer: Initializing...</div>
+        </div>
+      </div>
+
+      <!-- VIEW B: FRONT VIEW -->
+      <div class="viewport-card" id="cardViewB">
+        <div class="viewport-header">
+          <span id="titleViewB">VIEW B — FRONT ELEVATION</span>
+          <span class="viewport-tag">🖱 DRAG TO ORBIT • SCROLL TO ZOOM</span>
+        </div>
+        <div class="canvas-container">
+          <canvas id="canvasFront" class="viewport-canvas"></canvas>
+          <div class="hud-overlay">
+            <span>CAM: 0° LONGITUDINAL</span>
+            <span id="valPitchRoll">P: 0.0° | R: 0.0°</span>
+            <span>ROLL STABILITY: ARB ACTIVE</span>
+          </div>
+          <div id="viewportStatusB" class="viewport-status-badge">Renderer: Initializing...</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. LIVE NUMERICAL METRICS DASHBOARD -->
+    <section class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-title">Chassis Heave (z_c)</div>
+        <div class="metric-value-wrap">
+          <span id="valZc" class="metric-value">0.0</span>
+          <span class="metric-unit">mm</span>
+        </div>
+        <div class="metric-sub">CG Displacement</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-title">Wheel Bounce (z_w)</div>
+        <div class="metric-value-wrap">
+          <span id="valZw" class="metric-value">0.0</span>
+          <span class="metric-unit">mm</span>
+        </div>
+        <div class="metric-sub">FL Unsprung Mass</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-title">Suspension Stroke</div>
+        <div class="metric-value-wrap">
+          <span id="valStroke" class="metric-value">0.0</span>
+          <span class="metric-unit">mm</span>
+        </div>
+        <div class="metric-sub">Compression / Rebound</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-title">Spring Force</div>
+        <div class="metric-value-wrap">
+          <span id="valSpForce" class="metric-value">0</span>
+          <span class="metric-unit">N</span>
+        </div>
+        <div class="metric-sub">F_s = k · Δx</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-title">Damping Force</div>
+        <div class="metric-value-wrap">
+          <span id="valDaForce" class="metric-value">0</span>
+          <span class="metric-unit">N</span>
+        </div>
+        <div class="metric-sub">F_d = c · Δẋ</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-title">Natural Frequency</div>
+        <div class="metric-value-wrap">
+          <span id="valFn" class="metric-value">1.42</span>
+          <span class="metric-unit">Hz</span>
+        </div>
+        <div class="metric-sub">f_n = (1/2π)√(k/m)</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-title">Damping Ratio (ζ)</div>
+        <div class="metric-value-wrap">
+          <span id="valZeta" class="metric-value">0.70</span>
+          <span class="metric-unit">ratio</span>
+        </div>
+        <div id="valRegime" class="metric-sub">Optimal</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-title">Chassis Accel</div>
+        <div class="metric-value-wrap">
+          <span id="valAccel" class="metric-value">0.00</span>
+          <span class="metric-unit">m/s²</span>
+        </div>
+        <div class="metric-sub"><span id="valAccelG">0.00</span> g</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-title">Vehicle Speed</div>
+        <div class="metric-value-wrap">
+          <span id="valSpeed" class="metric-value">50</span>
+          <span class="metric-unit">km/h</span>
+        </div>
+        <div class="metric-sub">Forward Velocity</div>
+      </div>
+    </section>
+
+    <!-- 4. CONTROLS PANEL & LIVE OSCILLOSCOPE GRAPHS -->
+    <section class="lower-section">
+      <!-- Left: Interactive Controls -->
+      <div class="panel">
+        <div class="panel-title-bar">
+          <span>Interactive Engineering Controls</span>
+          <button id="btnResonance" class="btn" style="padding:3px 8px; font-size:0.72rem; background:#d97736; border-color:#d97736;">⚡ Auto-Tune Resonance</button>
+        </div>
+        <div class="panel-body">
+          <!-- Road Presets -->
+          <div>
+            <div class="preset-section-title">Road Surface Presets (8 Profiles)</div>
+            <div class="preset-grid">
+              <button class="preset-btn" data-preset="smooth_highway">1. Smooth Highway</button>
+              <button class="preset-btn active" data-preset="small_breakers">2. Small Breakers</button>
+              <button class="preset-btn" data-preset="large_breakers">3. Large Breakers</button>
+              <button class="preset-btn" data-preset="potholes">4. Pothole Road</button>
+              <button class="preset-btn" data-preset="wavy_road">5. Wavy Road (Resonance)</button>
+              <button class="preset-btn" data-preset="random_uneven">6. Random Uneven Road</button>
+              <button class="preset-btn" data-preset="left_bump">7. Left-Side Bump</button>
+              <button class="preset-btn" data-preset="right_bump">8. Right-Side Bump</button>
+            </div>
+          </div>
+
+          <!-- Quick Damping Regimes -->
+          <div>
+            <div class="preset-section-title">Quick Damping Regimes (ζ)</div>
+            <div class="regime-pills">
+              <button class="regime-btn" data-zeta="0.20">Underdamped<br>ζ = 0.20</button>
+              <button class="regime-btn active" data-zeta="0.70">Optimal<br>ζ = 0.70</button>
+              <button class="regime-btn" data-zeta="1.00">Critical<br>ζ = 1.00</button>
+              <button class="regime-btn" data-zeta="2.20">Overdamped<br>ζ = 2.20</button>
+            </div>
+          </div>
+
+          <!-- Parameter Sliders -->
+          <div class="slider-group">
+            <div class="slider-label-row">
+              <span>Vehicle Forward Speed</span>
+              <span id="valSliderSpeed" class="slider-val">50 km/h</span>
+            </div>
+            <input id="sliderSpeed" type="range" min="-60" max="120" value="50" step="1" class="control-slider">
+          </div>
+
+          <div class="slider-group">
+            <div class="slider-label-row">
+              <span>Spring Stiffness (k_s)</span>
+              <span id="valSliderStiffness" class="slider-val">28,000 N/m</span>
+            </div>
+            <input id="sliderStiffness" type="range" min="10000" max="75000" value="28000" step="1000" class="control-slider">
+          </div>
+
+          <div class="slider-group">
+            <div class="slider-label-row">
+              <span>Damping Coefficient (c_s)</span>
+              <span id="valSliderDamping" class="slider-val">2,200 N·s/m</span>
+            </div>
+            <input id="sliderDamping" type="range" min="400" max="6000" value="2200" step="50" class="control-slider">
+          </div>
+
+          <div class="slider-group">
+            <div class="slider-label-row">
+              <span>Vehicle Sprung Mass (M_s)</span>
+              <span id="valSliderMass" class="slider-val">1,400 kg</span>
+            </div>
+            <input id="sliderMass" type="range" min="800" max="2500" value="1400" step="50" class="control-slider">
+          </div>
+
+          <div class="slider-group">
+            <div class="slider-label-row">
+              <span>Road Bump Height Scale</span>
+              <span id="valSliderBumpHeight" class="slider-val">1.0x</span>
+            </div>
+            <input id="sliderBumpHeight" type="range" min="0.1" max="2.0" value="1.0" step="0.1" class="control-slider">
+          </div>
+
+          <div class="slider-group">
+            <div class="slider-label-row">
+              <span>Road Roughness Scale</span>
+              <span id="valSliderRoughness" class="slider-val">1.0x</span>
+            </div>
+            <input id="sliderRoughness" type="range" min="0.0" max="2.5" value="1.0" step="0.1" class="control-slider">
+          </div>
+
+          <div class="slider-group">
+            <div class="slider-label-row">
+              <span>Simulation Speed (Slow Motion)</span>
+              <span id="valSliderSimSpeed" class="slider-val">1.00x</span>
+            </div>
+            <input id="sliderSimSpeed" type="range" min="0.25" max="2.0" value="1.0" step="0.05" class="control-slider">
+          </div>
+
+          <!-- Dynamic Parameter Insight -->
+          <div id="parameterInsight" class="insight-box">
+            Analyzing suspension parameters...
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Live Oscilloscope Graphs -->
+      <div class="panel">
+        <div class="panel-title-bar">
+          <span>Live Physics Telemetry Oscilloscopes</span>
+          <span style="font-size:0.7rem; font-family:var(--font-mono); color:var(--text-muted);">SAMPLE RATE: 60 FPS • ROLLING BUFFER</span>
+        </div>
+        <div class="panel-body" style="gap:12px;">
+          <div class="graphs-grid">
+            <!-- Graph 1: Displacement vs Time -->
+            <div class="graph-card">
+              <div class="graph-header">
+                <span>1. Displacement vs Time</span>
+                <div class="graph-legend">
+                  <span><span class="legend-dot" style="background:#d97736;"></span>Chassis (z_c)</span>
+                  <span><span class="legend-dot" style="background:#2ecc71;"></span>Wheel (z_w)</span>
+                </div>
+              </div>
+              <canvas id="chartDisp" class="telemetry-canvas"></canvas>
+            </div>
+
+            <!-- Graph 2: Velocity vs Time -->
+            <div class="graph-card">
+              <div class="graph-header">
+                <span>2. Chassis Velocity vs Time</span>
+                <div class="graph-legend">
+                  <span><span class="legend-dot" style="background:#3498db;"></span>dz_c/dt [m/s]</span>
+                </div>
+              </div>
+              <canvas id="chartVel" class="telemetry-canvas"></canvas>
+            </div>
+
+            <!-- Graph 3: Acceleration vs Time -->
+            <div class="graph-card">
+              <div class="graph-header">
+                <span>3. Vertical Acceleration vs Time</span>
+                <div class="graph-legend">
+                  <span><span class="legend-dot" style="background:#e74c3c;"></span>d²z_c/dt² [m/s²]</span>
+                </div>
+              </div>
+              <canvas id="chartAccel" class="telemetry-canvas"></canvas>
+            </div>
+
+            <!-- Graph 4: Road Input vs Response -->
+            <div class="graph-card">
+              <div class="graph-header">
+                <span>4. Road Input vs Suspension Response</span>
+                <div class="graph-legend">
+                  <span><span class="legend-dot" style="background:#9aa5b8;"></span>Road z_r</span>
+                  <span><span class="legend-dot" style="background:#d97736;"></span>Chassis z_c</span>
+                </div>
+              </div>
+              <canvas id="chartRoad" class="telemetry-canvas"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Educational Physics Modal -->
+  <div id="eduModal" class="modal-overlay">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2>📘 Automotive Suspension Physics & Dynamics Guide</h2>
+        <button id="btnCloseEdu" class="btn">✕ Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="edu-section">
+          <h3>1. Simple Harmonic Motion (SHM)</h3>
+          <p>
+            When a vehicle passes over road bumps, the springs compress or extend. According to Hooke's Law, the spring produces a restoring force proportional to displacement:
+          </p>
+          <div class="equation-box">F_spring = -k · x</div>
+          <p>
+            Without damping, the car mass would oscillate endlessly between potential energy and kinetic energy at its natural frequency.
+          </p>
+        </div>
+
+        <div class="edu-section">
+          <h3>2. Viscous Damping & Shock Absorbers</h3>
+          <p>
+            Springs store mechanical energy, but shock absorbers (hydraulic dampers) dissipate it as heat. Viscous damping force is proportional to relative velocity:
+          </p>
+          <div class="equation-box">F_damping = -c · (dx/dt)</div>
+          <p>
+            Calibrated fluid orifices in the damper restrict flow, slowing oscillation cycles and maintaining tire-ground contact.
+          </p>
+        </div>
+
+        <div class="edu-section">
+          <h3>3. Governing Equation of Motion</h3>
+          <div class="equation-box">m · x''(t) + c · x'(t) + k · x(t) = F(t)</div>
+          <p>
+            Where <strong>m</strong> is effective quarter-car sprung mass (kg), <strong>c</strong> is damping coefficient (N·s/m), <strong>k</strong> is spring stiffness (N/m), and <strong>F(t)</strong> is the dynamic road excitation.
+          </p>
+        </div>
+
+        <div class="edu-section">
+          <h3>4. Natural Frequency & Damping Ratio</h3>
+          <div class="equation-box">ω_n = √(k / m)  [rad/s]      f_n = ω_n / (2π)  [Hz]</div>
+          <div class="equation-box">c_crit = 2 · √(m · k)  [N·s/m]    ζ = c / c_crit  (Damping Ratio)</div>
+          <p>
+            • <strong>Underdamped (ζ &lt; 1.0):</strong> Oscillatory decay with damped frequency ω_d = ω_n√(1 - ζ²). Passenger cars aim for ζ ≈ 0.6 – 0.7.<br>
+            • <strong>Critically Damped (ζ = 1.0):</strong> Fastest possible return to equilibrium with zero overshoot.<br>
+            • <strong>Overdamped (ζ &gt; 1.0):</strong> Sluggish, non-oscillatory return. Transmits harsh vertical shock to occupants.
+          </p>
+        </div>
+
+        <div class="edu-section">
+          <h3>5. Forced Oscillation & Resonance</h3>
+          <div class="equation-box">f_road = v / λ  [Hz]      r = f_road / f_n  (Frequency Ratio)</div>
+          <p>
+            When vehicle forward speed <strong>v</strong> over road waves of length <strong>λ</strong> produces an excitation frequency matching the vehicle's natural frequency (r ≈ 1.0), <strong>RESONANCE</strong> occurs. Amplitude magnifies dramatically, which is why adequate damping is critical for vehicular safety!
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CAD Asset Pipeline & Mechanical Node Mapping Modal -->
+  <div class="modal-overlay" id="assetReportModal">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2>AUTOMOTIVE CAD ASSET INTEGRATION PIPELINE & NODE MAPPING</h2>
+        <button class="btn btn-sm" id="btnCloseAssetReport">✕ Close</button>
+      </div>
+      <div class="modal-body" id="assetReportModalBody">
+        <!-- Live Diagnostic Report populated by CADAssetPipeline -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="physics_client.js?v=2.2"></script>
+  <script src="vehicle_3d.js?v=2.2"></script>
+  <script src="app.js?v=2.2"></script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+# Ignore Python and server-side files
+__pycache__/
+*.pyc
+*.py
+*.bak
+*.backup_*
+
+# Ignore scratch tools and validation scripts
+scratch/
+
+# Ignore heavy raw CAD incoming files and offline renders
+web/assets/incoming/
+web/assets/renders/
+
+# Ignore offline publication plots and conversion reports
+automotive_cad_rolling_chassis_sheet.png
+cad_front_elevation_render.png
+cad_side_elevation_render.png
+cad_three_quarter_inspection_render.png
+damping_regimes.png
+frequency_response.png
+suspension_telemetry.png
+ASSET_CONVERSION_REPORT.md
+
+# OS junk
+.DS_Store

@@ -1,0 +1,36 @@
+# Operating System files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Python caches and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+
+# Backup and temporary editor files
+*.bak
+*.backup_*
+*.swp
+*~
+
+# Unused heavy incoming raw CAD and STEP assets (>100MB, not used in live simulator)
+web/assets/incoming/
+
+# Vercel deployment cache and environments
+.vercel/
+.env*.local
+
+# Node dependencies and logs
+node_modules/
+npm-debug.log*
