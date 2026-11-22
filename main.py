@@ -478,5 +478,12 @@ def main():
     start_server(port=args.port, open_browser=not args.no_browser)
 
 
+# Vercel Serverless Function Compatibility Entrypoint
+def handler(request, response=None):
+    return {"status": "online", "message": "Vehicle Suspension Simulator Engine"}
+
+app = handler
+
+
 if __name__ == '__main__':
     main()
