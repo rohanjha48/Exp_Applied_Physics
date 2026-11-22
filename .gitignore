@@ -7,6 +7,18 @@
 ehthumbs.db
 Thumbs.db
 
+# Secrets, Environment Files & Keys (Never commit real credentials)
+.env
+.env.*
+!.env.example
+*.env
+*.key
+*.pem
+*.cert
+*.crt
+secrets/
+credentials/
+
 # Python caches and bytecode
 __pycache__/
 *.py[cod]
@@ -29,7 +41,6 @@ web/assets/incoming/
 
 # Vercel deployment cache and environments
 .vercel/
-.env*.local
 
 # Node dependencies and logs
 node_modules/

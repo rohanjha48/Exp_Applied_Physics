@@ -313,15 +313,37 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Handle URL query parameter for automated view inspection (?view=side, front, iso, front_closeup, rear_closeup, chassis_34)
+  // Helper: Secure HTML Entity Escaping (Prevents DOM XSS / Injection)
+  function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  // Handle URL query parameter for automated view inspection with strict whitelisting
+  const ALLOWED_VIEWS = [
+    'dual', 'iso', 'side', 'front', 'front_closeup', 'front_right_closeup',
+    'rear_closeup', 'rear_right_closeup', 'compression', 'rebound', 'chassis_34'
+  ];
+  const ALLOWED_ROADS = [
+    'highway_smooth', 'small_breakers', 'large_breakers', 'pothole_asymmetric',
+    'pothole_single', 'wavy_road', 'washboard_corrugations', 'curb_strike'
+  ];
+  const ALLOWED_CHASSIS = ['complete', 'exposed'];
+
   const urlParams = new URLSearchParams(window.location.search);
-  const initialView = urlParams.get('view');
+  const rawView = urlParams.get('view');
+  const initialView = (rawView && ALLOWED_VIEWS.includes(rawView)) ? rawView : null;
   if (initialView) {
     setTimeout(() => {
       if (renderer && renderer.setCameraMode) {
         renderer.setCameraMode(initialView);
       }
-      const targetPill = document.querySelector(`.view-pill[data-view="${initialView}"]`);
+      const targetPill = document.querySelector(`.view-pill[data-view="${CSS.escape(initialView)}"]`);
       if (targetPill) {
         document.querySelectorAll('.view-pill').forEach(p => p.classList.remove('active'));
         targetPill.classList.add('active');
@@ -364,10 +386,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Handle URL query parameters for road profile and vehicle speed (?road=large_breakers, speed=0, etc.)
-  const initialRoad = urlParams.get('road');
+  const rawRoad = urlParams.get('road');
+  const initialRoad = (rawRoad && ALLOWED_ROADS.includes(rawRoad)) ? rawRoad : null;
   if (initialRoad) {
     setTimeout(() => {
-      const roadBtn = document.querySelector(`.preset-btn[data-preset="${initialRoad}"]`);
+      const roadBtn = document.querySelector(`.preset-btn[data-preset="${CSS.escape(initialRoad)}"]`);
       if (roadBtn) roadBtn.click();
     }, 200);
   }
@@ -375,14 +398,17 @@ document.addEventListener('DOMContentLoaded', () => {
   const initialSpeed = urlParams.get('speed');
   if (initialSpeed !== null) {
     const spd = parseFloat(initialSpeed);
-    params.speedKmh = spd;
-    if (sliders.speed && sliders.speed.el) sliders.speed.el.value = spd;
-    if (sliders.speed && sliders.speed.val) {
-      sliders.speed.val.textContent = spd < 0 ? `${spd.toFixed(0)} km/h (Rev)` : `${spd.toFixed(0)} km/h`;
+    if (!isNaN(spd) && isFinite(spd) && spd >= -50.0 && spd <= 200.0) {
+      params.speedKmh = spd;
+      if (sliders.speed && sliders.speed.el) sliders.speed.el.value = spd;
+      if (sliders.speed && sliders.speed.val) {
+        sliders.speed.val.textContent = spd < 0 ? `${spd.toFixed(0)} km/h (Rev)` : `${spd.toFixed(0)} km/h`;
+      }
     }
   }
 
-  const chassisParam = urlParams.get('chassis');
+  const rawChassis = urlParams.get('chassis');
+  const chassisParam = (rawChassis && ALLOWED_CHASSIS.includes(rawChassis)) ? rawChassis : null;
   if (chassisParam) {
     setTimeout(() => {
       if (renderer) {
@@ -457,14 +483,14 @@ document.addEventListener('DOMContentLoaded', () => {
       const isLoaded = a.status === 'loaded';
       html += `
         <tr>
-          <td><strong>${a.label}</strong></td>
-          <td><code>web/${a.file}</code></td>
+          <td><strong>${escapeHtml(a.label)}</strong></td>
+          <td><code>web/${escapeHtml(a.file)}</code></td>
           <td>
             <span class="status-badge-inline ${isLoaded ? 'matched' : 'missing'}">
               ${isLoaded ? '✓ LOADED' : 'MISSING (404)'}
             </span>
           </td>
-          <td>${a.dimensions || '—'}</td>
+          <td>${escapeHtml(a.dimensions) || '—'}</td>
         </tr>
       `;
     }
@@ -549,14 +575,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
       html += `
         <tr>
-          <td><code>${item.role}</code></td>
-          <td>${item.sub}</td>
+          <td><code>${escapeHtml(item.role)}</code></td>
+          <td>${escapeHtml(item.sub)}</td>
           <td>
             <span class="status-badge-inline ${isMatched ? 'matched' : 'missing'}">
-              ${isMatched ? `✓ MATCHED: "${matchedNode}"` : 'MISSING (Awaiting CAD Model)'}
+              ${isMatched ? `✓ MATCHED: "${escapeHtml(matchedNode)}"` : 'MISSING (Awaiting CAD Model)'}
             </span>
           </td>
-          <td><span style="color:#64748b;">${item.aliases}</span></td>
+          <td><span style="color:#64748b;">${escapeHtml(item.aliases)}</span></td>
         </tr>
       `;
     });

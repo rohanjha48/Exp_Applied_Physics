@@ -4,6 +4,19 @@ __pycache__/
 *.py
 *.bak
 *.backup_*
+requirements.txt
+
+# Ignore secrets, environment files & certificates
+.env
+.env.*
+!.env.example
+*.env
+*.key
+*.pem
+*.cert
+*.crt
+secrets/
+credentials/
 
 # Ignore scratch tools and validation scripts
 scratch/

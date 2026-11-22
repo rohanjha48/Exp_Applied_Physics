@@ -1,0 +1,4 @@
+# Real-Time 3D Vehicle Suspension Simulator
+# Core Python Numerical & Engineering Dependencies
+numpy>=1.24.0,<2.3.0
+matplotlib>=3.7.0,<4.0.0

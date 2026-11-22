@@ -14,15 +14,33 @@ from road_model import create_road_profile, PRESET_CATALOG
 from physics_engine import PhysicsEngine
 from dashboard import TelemetryDashboard, DrDampener
 from visualization import OfflinePlotter
+from security import (
+    AdminAuth, RateLimiter, SECURITY_HEADERS,
+    sanitize_quarter_car_inputs, is_path_safe
+)
 
 
 class SuspensionServerHandler(SimpleHTTPRequestHandler):
-    """Custom HTTP handler serving web assets and laboratory REST API."""
+    """
+    Hardened HTTP handler serving web assets and automotive laboratory REST API.
+    Enforces security headers, IP rate limiting, input sanitization, and admin access control.
+    """
+    server_version = "SuspensionLab/2.0"
+    sys_version = ""
+
+    # Shared security singletons
+    rate_limiter = RateLimiter()
+    admin_auth = AdminAuth()
+    allowed_origins = [
+        o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000").split(",")
+        if o.strip()
+    ]
+    debug_mode = False
 
     def __init__(self, *args, **kwargs):
         # Serve from web directory
-        web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
-        super().__init__(*args, directory=web_dir, **kwargs)
+        self.web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
+        super().__init__(*args, directory=self.web_dir, **kwargs)
 
     def log_message(self, format, *args):
         try:
@@ -30,21 +48,53 @@ class SuspensionServerHandler(SimpleHTTPRequestHandler):
                 return
             first_arg = str(args[0])
             second_arg = str(args[1]) if len(args) > 1 else ""
+            # Redact authorization tokens if any appear in log strings
+            if "Bearer " in first_arg or "X-Admin-Key" in first_arg:
+                first_arg = "[REDACTED_AUTH_REQUEST]"
             # Log errors or API calls; silence routine 200/204/304 static GETs
             if "/api/" in first_arg or (second_arg and second_arg not in ('200', '204', '304')):
                 super().log_message(format, *args)
         except Exception:
-            # Never let logging errors interrupt HTTP request handling
             pass
 
+    def _get_client_ip(self) -> str:
+        """Extract remote client IP address safely."""
+        forwarded = self.headers.get('X-Forwarded-For')
+        if forwarded:
+            return forwarded.split(',')[0].strip()
+        return self.client_address[0] if self.client_address else "127.0.0.1"
+
+    def _apply_cors_headers(self):
+        """Apply CORS headers based on configured origins or same-origin."""
+        origin = self.headers.get('Origin', '')
+        if origin and (origin in self.allowed_origins or origin.startswith("http://localhost:") or origin.startswith("http://127.0.0.1:")):
+            self.send_header('Access-Control-Allow-Origin', origin)
+            self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Admin-Key')
+            self.send_header('Access-Control-Max-Age', '86400')
+            self.send_header('Vary', 'Origin')
+
     def end_headers(self):
-        # Prevent stale JavaScript and CSS cache issues during development
+        # Apply enterprise security headers
+        for header_key, header_val in SECURITY_HEADERS.items():
+            self.send_header(header_key, header_val)
+
+        # Apply CORS headers
+        self._apply_cors_headers()
+
+        # Prevent stale development caches
         self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
         self.send_header('Pragma', 'no-cache')
         self.send_header('Expires', '0')
         super().end_headers()
 
+    def do_OPTIONS(self):
+        """Handle CORS preflight requests securely."""
+        self.send_response(204)
+        self.end_headers()
+
     def do_GET(self):
+        client_ip = self._get_client_ip()
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
@@ -55,49 +105,140 @@ class SuspensionServerHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             return
 
-        if path == '/api/status':
-            self.send_response(200)
+        # 1. PATH TRAVERSAL & FORBIDDEN ASSET SECURITY CHECK
+        if not path.startswith('/api/'):
+            if not is_path_safe(path, self.web_dir):
+                self.send_response(403)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'Forbidden: Access denied to protected file or path'}).encode('utf-8'))
+                return
+
+        # 2. RATE LIMITING ON API ENDPOINTS
+        if path.startswith('/api/'):
+            # Stricter limit on heavy disk-export endpoints (5/min), standard on data APIs (60/min)
+            max_req = 5 if path == '/api/export_plots' else 60
+            allowed, retry_after = self.rate_limiter.is_allowed(
+                client_ip, endpoint=path, max_requests=max_req, window_seconds=60
+            )
+            if not allowed:
+                self.send_response(429)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Retry-After', str(retry_after))
+                self.end_headers()
+                err_resp = {
+                    'error': 'Too Many Requests',
+                    'message': f'Rate limit exceeded. Please retry in {retry_after} seconds.',
+                    'retry_after': retry_after
+                }
+                self.wfile.write(json.dumps(err_resp).encode('utf-8'))
+                return
+
+        try:
+            # 3. PUBLIC API: SIMULATOR STATUS & ROAD CATALOG
+            if path == '/api/status':
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                status = {
+                    'status': 'online',
+                    'name': 'Real-Time 3D Vehicle Suspension Simulator',
+                    'version': '2.0-automotive',
+                    'road_presets': list(PRESET_CATALOG.keys()),
+                    'security': {
+                        'rate_limiting': True,
+                        'input_validation': True,
+                        'headers_hardened': True
+                    }
+                }
+                self.wfile.write(json.dumps(status).encode('utf-8'))
+                return
+
+            # 4. PUBLIC API: QUARTER-CAR METRICS WITH STRICT INPUT SANITIZATION
+            elif path == '/api/quarter_car':
+                cleaned_params, validation_error = sanitize_quarter_car_inputs(query)
+                if validation_error:
+                    self.send_response(400)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({'error': 'Bad Request', 'message': validation_error}).encode('utf-8'))
+                    return
+
+                p = VehicleParameters()
+                if 'front_spring_stiffness' in cleaned_params:
+                    p.front_spring_stiffness = cleaned_params['front_spring_stiffness']
+                if 'front_damping_coeff' in cleaned_params:
+                    p.front_damping_coeff = cleaned_params['front_damping_coeff']
+                if 'sprung_mass' in cleaned_params:
+                    p.sprung_mass = cleaned_params['sprung_mass']
+
+                qc = p.get_quarter_car_properties('FL')
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(qc).encode('utf-8'))
+                return
+
+            # 5. PROTECTED ADMIN ROUTE: SYSTEM METRICS & HEALTH
+            elif path == '/api/admin/status':
+                if not self.admin_auth.verify_request_auth(dict(self.headers)):
+                    self.send_response(401)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('WWW-Authenticate', 'Bearer realm="SuspensionLabAdmin"')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({'error': 'Unauthorized: Admin authentication required'}).encode('utf-8'))
+                    return
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                admin_info = {
+                    'admin_status': 'active',
+                    'authenticated': True,
+                    'timestamp': time.time(),
+                    'rate_limiting': 'active',
+                    'ephemeral_key': self.admin_auth.is_ephemeral,
+                    'debug_mode': self.debug_mode
+                }
+                self.wfile.write(json.dumps(admin_info).encode('utf-8'))
+                return
+
+            # 6. PROTECTED ROUTE: EXPORT PUBLICATION PLOTS (RESTRICTED TO PREVENT DISK EXHAUSTION)
+            elif path == '/api/export_plots':
+                # Require admin authorization to trigger disk-writing operations
+                if not self.admin_auth.verify_request_auth(dict(self.headers)):
+                    self.send_response(401)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('WWW-Authenticate', 'Bearer realm="SuspensionLabAdmin"')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        'error': 'Unauthorized',
+                        'message': 'Admin token required for plot export operations.'
+                    }).encode('utf-8'))
+                    return
+
+                p1 = OfflinePlotter.generate_damping_comparison("damping_regimes.png")
+                p2 = OfflinePlotter.generate_transmissibility_curve("frequency_response.png")
+                p3 = OfflinePlotter.generate_road_telemetry_plot("large_breakers", "suspension_telemetry.png")
+                res = {'status': 'success', 'files': [p1, p2, p3]}
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(res).encode('utf-8'))
+                return
+
+            # 7. SERVE STATIC WEB FILES
+            super().do_GET()
+
+        except Exception as e:
+            if self.debug_mode:
+                raise
+            # Generic error response in production (prevents traceback leaking)
+            self.send_response(500)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
-            status = {
-                'status': 'online',
-                'name': 'Real-Time 3D Vehicle Suspension Simulator',
-                'version': '2.0-automotive',
-                'road_presets': list(PRESET_CATALOG.keys()),
-            }
-            self.wfile.write(json.dumps(status).encode('utf-8'))
-            return
-
-        elif path == '/api/quarter_car':
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-
-            p = VehicleParameters()
-            if 'k' in query:
-                p.front_spring_stiffness = float(query['k'][0])
-            if 'c' in query:
-                p.front_damping_coeff = float(query['c'][0])
-            if 'm' in query:
-                p.sprung_mass = float(query['m'][0])
-
-            qc = p.get_quarter_car_properties('FL')
-            self.wfile.write(json.dumps(qc).encode('utf-8'))
-            return
-
-        elif path == '/api/export_plots':
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            p1 = OfflinePlotter.generate_damping_comparison("damping_regimes.png")
-            p2 = OfflinePlotter.generate_transmissibility_curve("frequency_response.png")
-            p3 = OfflinePlotter.generate_road_telemetry_plot("large_breakers", "suspension_telemetry.png")
-            res = {'status': 'success', 'files': [p1, p2, p3]}
-            self.wfile.write(json.dumps(res).encode('utf-8'))
-            return
-
-        # Serve static web files
-        super().do_GET()
+            self.wfile.write(json.dumps({'error': 'Internal Server Error'}).encode('utf-8'))
 
 
 def run_physics_tests() -> bool:
@@ -300,8 +441,20 @@ def main():
     parser.add_argument('--cli', action='store_true', help="Run terminal simulation mode with live ASCII graphs")
     parser.add_argument('--road', type=str, default='large_breakers', choices=list(PRESET_CATALOG.keys()),
                         help="Road profile preset for CLI simulation")
+    parser.add_argument('--debug', action='store_true', help="Run in debug mode (disabled by default for security)")
+    parser.add_argument('--admin-key', type=str, default=None, help="Optional admin API key for protected routes")
 
     args = parser.parse_args()
+
+    if args.debug:
+        SuspensionServerHandler.debug_mode = True
+        print("  [SECURITY NOTICE] Debug mode is ENABLED. Do not use in production.")
+    else:
+        SuspensionServerHandler.debug_mode = False
+
+    if args.admin_key:
+        SuspensionServerHandler.admin_auth._admin_key = args.admin_key.strip()
+        SuspensionServerHandler.admin_auth._fallback_active = False
 
     if args.test:
         success = run_physics_tests()
